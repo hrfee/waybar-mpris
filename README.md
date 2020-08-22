@@ -21,7 +21,7 @@ or just grab the `waybar-mpris` binary from here and place it in your PATH.
 
 ## Usage
 When running, the program will pipe out json in waybar's format. Add something like this to your waybar `config.json`:
-``` json
+```
 "custom/waybar-mpris": {
     "return-type": "json",
     "exec": "waybar-mpris",
