@@ -1,5 +1,5 @@
 ## waybar-mpris
-<p>
+<p align="center">
     <img src="images/cropped.gif" style="width: 100%;" alt="bar gif"></img>
 </p>
 
