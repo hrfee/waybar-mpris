@@ -2,6 +2,11 @@
 
 a custom waybar component for displaying info from MPRIS2 players. It automatically focuses on currently playing music players, and can easily be customized.
 
+## Install
+`go get github.com/hrfee/waybar-mpris`
+
+or just grab the binary from here.
+
 ## Usage
 When running, the program will pipe out json in waybar's format. Make a custom component in your configuration and set `return-type` to `json`, and `exec` to the path to the program.
 ```
