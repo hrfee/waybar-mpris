@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/godbus/dbus/v5"
+	flag "github.com/spf13/pflag"
 )
 
 var knownPlayers = map[string]string{
@@ -25,12 +26,17 @@ type Player struct {
 const (
 	INTERFACE = "org.mpris.MediaPlayer2"
 	PATH      = "/org/mpris/MediaPlayer2"
-	PLAY      = "▶"
-	PAUSE     = ""
 	// NameOwnerChanged
 	MATCH_NOC = "type='signal',path='/org/freedesktop/DBus',interface='org.freedesktop.DBus',member='NameOwnerChanged'"
 	// PropertiesChanged
 	MATCH_PC = "type='signal',path='/org/mpris/MediaPlayer2',interface='org.freedesktop.DBus.Properties'"
+)
+
+var (
+	PLAY  = "▶"
+	PAUSE = ""
+	SEP   = " - "
+	ORDER = "SYMBOL:ARTIST:ALBUM:TITLE"
 )
 
 // NewPlayer returns a new player object.
@@ -108,16 +114,48 @@ func (p *Player) Refresh() (err error) {
 }
 
 func (p *Player) JSON() string {
+	data := map[string]string{}
+	symbol := PLAY
+	data["class"] = "paused"
+	if p.playing {
+		symbol = PAUSE
+		data["class"] = "playing"
+	}
 	var items []string
-	for _, v := range []string{p.artist, p.album, p.title} {
-		if v != "" {
-			items = append(items, v)
+	order := strings.Split(ORDER, ":")
+	for _, v := range order {
+		if v == "SYMBOL" {
+			items = append(items, symbol)
+		} else if v == "ARTIST" {
+			if p.artist != "" {
+				items = append(items, p.artist)
+			}
+		} else if v == "ALBUM" {
+			if p.album != "" {
+				items = append(items, p.album)
+			}
+		} else if v == "TITLE" {
+			if p.album != "" {
+				items = append(items, p.title)
+			}
 		}
 	}
 	if len(items) == 0 {
 		return "{}"
 	}
-	data := map[string]string{}
+	text := ""
+	for i, v := range items {
+		right := ""
+		if v == symbol && i != len(items)-1 {
+			right = " "
+		} else if i != len(items)-1 && items[i+1] != symbol {
+			right = SEP
+		} else {
+			right = " "
+		}
+		text += v + right
+	}
+
 	data["tooltip"] = fmt.Sprintf(
 		"%s\nby %s\n",
 		p.title,
@@ -126,18 +164,12 @@ func (p *Player) JSON() string {
 		data["tooltip"] += "from " + p.album + "\n"
 	}
 	data["tooltip"] += "(" + p.name + ")"
-	symbol := PLAY
-	data["class"] = "paused"
-	if p.playing {
-		symbol = PAUSE
-		data["class"] = "playing"
-	}
-	data["text"] = symbol + " " + strings.Join(items, " - ")
-	text, err := json.Marshal(data)
+	data["text"] = text
+	out, err := json.Marshal(data)
 	if err != nil {
 		return "{}"
 	}
-	return string(text)
+	return string(out)
 }
 
 type PlayerList struct {
@@ -221,6 +253,12 @@ func (pl *PlayerList) JSON() string {
 }
 
 func main() {
+	flag.StringVar(&PLAY, "play", PLAY, "Play symbol/text to use.")
+	flag.StringVar(&PAUSE, "pause", PAUSE, "Pause symbol/text to use.")
+	flag.StringVar(&SEP, "separator", SEP, "Separator string to use between artist, album, and title.")
+	flag.StringVar(&ORDER, "order", ORDER, "Element order.")
+	flag.Parse()
+
 	conn, err := dbus.SessionBus()
 	if err != nil {
 		panic(err)
@@ -230,7 +268,10 @@ func main() {
 	}
 	players.Reload()
 	players.Sort()
-	fmt.Println("New array", players)
+	players.Refresh()
+	fmt.Println(players.JSON())
+	lastLine := ""
+	// fmt.Println("New array", players)
 	conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, MATCH_NOC)
 	conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, MATCH_PC)
 	c := make(chan *dbus.Signal, 10)
@@ -244,10 +285,10 @@ func main() {
 				conn.BusObject().Call("org.freedesktop.DBus.GetConnectionUnixProcessID", 0, name).Store(&pid)
 				if strings.Contains(name, INTERFACE) {
 					if pid == 0 {
-						fmt.Println("Removing", name)
+						// fmt.Println("Removing", name)
 						players.Remove(name)
 					} else {
-						fmt.Println("Adding", name)
+						// fmt.Println("Adding", name)
 						players.New(name)
 					}
 				}
@@ -255,8 +296,11 @@ func main() {
 		} else if strings.Contains(v.Name, "PropertiesChanged") && strings.Contains(v.Body[0].(string), INTERFACE+".Player") {
 			players.Refresh()
 			players.Sort()
-			fmt.Println(players.JSON())
+			if l := players.JSON(); l != lastLine {
+				lastLine = l
+				fmt.Println(l)
+			}
 		}
-		fmt.Println("New array", players)
+		// fmt.Println("New array", players)
 	}
 }
