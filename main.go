@@ -3,11 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
-	"strings"
-
 	"github.com/godbus/dbus/v5"
 	flag "github.com/spf13/pflag"
+	"log"
+	"net"
+	"os"
+	"sort"
+	"strings"
 )
 
 var knownPlayers = map[string]string{
@@ -30,13 +32,16 @@ const (
 	MATCH_NOC = "type='signal',path='/org/freedesktop/DBus',interface='org.freedesktop.DBus',member='NameOwnerChanged'"
 	// PropertiesChanged
 	MATCH_PC = "type='signal',path='/org/mpris/MediaPlayer2',interface='org.freedesktop.DBus.Properties'"
+	SOCK     = "/tmp/waybar-mpris.sock"
 )
 
 var (
-	PLAY  = "▶"
-	PAUSE = ""
-	SEP   = " - "
-	ORDER = "SYMBOL:ARTIST:ALBUM:TITLE"
+	PLAY      = "▶"
+	PAUSE     = ""
+	SEP       = " - "
+	ORDER     = "SYMBOL:ARTIST:ALBUM:TITLE"
+	AUTOFOCUS = false
+	COMMANDS  = []string{"player-next", "player-prev", "next", "prev", "toggle"}
 )
 
 // NewPlayer returns a new player object.
@@ -135,7 +140,7 @@ func (p *Player) JSON() string {
 				items = append(items, p.album)
 			}
 		} else if v == "TITLE" {
-			if p.album != "" {
+			if p.title != "" {
 				items = append(items, p.title)
 			}
 		}
@@ -173,8 +178,9 @@ func (p *Player) JSON() string {
 }
 
 type PlayerList struct {
-	list List
-	conn *dbus.Conn
+	list    List
+	current uint
+	conn    *dbus.Conn
 }
 
 type List []*Player
@@ -200,6 +206,7 @@ func (ls List) Swap(i, j int) {
 
 // Doesn't retain order since sorting if constantly done anyway
 func (pl *PlayerList) Remove(fullName string) {
+	currentName := pl.list[pl.current].fullName
 	var i int
 	found := false
 	for ind, p := range pl.list {
@@ -212,6 +219,19 @@ func (pl *PlayerList) Remove(fullName string) {
 	if found {
 		pl.list[0], pl.list[i] = pl.list[i], pl.list[0]
 		pl.list = pl.list[1:]
+		found = false
+		for ind, p := range pl.list {
+			if p.fullName == currentName {
+				pl.current = uint(ind)
+				found = true
+				break
+			}
+		}
+		if !found {
+			pl.current = 0
+			pl.Refresh()
+			fmt.Println(pl.JSON())
+		}
 	}
 	// ls[len(ls)-1], ls[i] = ls[i], ls[len(ls)-1]
 	// ls = ls[:len(ls)-1]
@@ -233,10 +253,14 @@ func (pl *PlayerList) Reload() error {
 
 func (pl *PlayerList) New(name string) {
 	pl.list = append(pl.list, NewPlayer(pl.conn, name))
+	if AUTOFOCUS {
+		pl.current = uint(len(pl.list) - 1)
+	}
 }
 
 func (pl *PlayerList) Sort() {
 	sort.Sort(pl.list)
+	pl.current = 0
 }
 
 func (pl *PlayerList) Refresh() {
@@ -247,9 +271,21 @@ func (pl *PlayerList) Refresh() {
 
 func (pl *PlayerList) JSON() string {
 	if len(pl.list) != 0 {
-		return pl.list[0].JSON()
+		return pl.list[pl.current].JSON()
 	}
 	return "{}"
+}
+
+func (pl *PlayerList) Next() {
+	pl.list[pl.current].player.Call(INTERFACE+".Player.Next", 0)
+}
+
+func (pl *PlayerList) Prev() {
+	pl.list[pl.current].player.Call(INTERFACE+".Player.Previous", 0)
+}
+
+func (pl *PlayerList) Toggle() {
+	pl.list[pl.current].player.Call(INTERFACE+".Player.PlayPause", 0)
 }
 
 func main() {
@@ -257,50 +293,113 @@ func main() {
 	flag.StringVar(&PAUSE, "pause", PAUSE, "Pause symbol/text to use.")
 	flag.StringVar(&SEP, "separator", SEP, "Separator string to use between artist, album, and title.")
 	flag.StringVar(&ORDER, "order", ORDER, "Element order.")
+	flag.BoolVar(&AUTOFOCUS, "autofocus", AUTOFOCUS, "Auto switch to currently playing music players.")
+	var command string
+	flag.StringVar(&command, "send", "", "send command to already runnning waybar-mpris instance. (options: "+strings.Join(COMMANDS, "/")+")")
 	flag.Parse()
 
-	conn, err := dbus.SessionBus()
-	if err != nil {
-		panic(err)
-	}
-	players := &PlayerList{
-		conn: conn,
-	}
-	players.Reload()
-	players.Sort()
-	players.Refresh()
-	fmt.Println(players.JSON())
-	lastLine := ""
-	// fmt.Println("New array", players)
-	conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, MATCH_NOC)
-	conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, MATCH_PC)
-	c := make(chan *dbus.Signal, 10)
-	conn.Signal(c)
-	for v := range c {
-		// fmt.Printf("SIGNAL: Sender %s, Path %s, Name %s, Body %s\n", v.Sender, v.Path, v.Name, v.Body)
-		if strings.Contains(v.Name, "NameOwnerChanged") {
-			switch name := v.Body[0].(type) {
-			case string:
-				var pid uint32
-				conn.BusObject().Call("org.freedesktop.DBus.GetConnectionUnixProcessID", 0, name).Store(&pid)
-				if strings.Contains(name, INTERFACE) {
-					if pid == 0 {
-						// fmt.Println("Removing", name)
-						players.Remove(name)
+	if command != "" {
+		conn, err := net.Dial("unix", SOCK)
+		if err != nil {
+			log.Fatalln("Couldn't dial:", err)
+		}
+		_, err = conn.Write([]byte(command))
+		if err != nil {
+			log.Fatalln("Couldn't send command")
+		}
+		fmt.Println("Sent.")
+	} else {
+		conn, err := dbus.SessionBus()
+		if err != nil {
+			panic(err)
+		}
+		players := &PlayerList{
+			conn: conn,
+		}
+		players.Reload()
+		players.Sort()
+		players.Refresh()
+		fmt.Println(players.JSON())
+		lastLine := ""
+		// fmt.Println("New array", players)
+		go func() {
+			os.Remove(SOCK)
+			listener, err := net.Listen("unix", SOCK)
+			if err != nil {
+				log.Fatalln("Couldn't establish socket connection at", SOCK)
+			}
+			defer listener.Close()
+			for {
+				con, err := listener.Accept()
+				if err != nil {
+					log.Println("Couldn't accept:", err)
+					continue
+				}
+				buf := make([]byte, 512)
+				nr, err := con.Read(buf)
+				if err != nil {
+					log.Println("Couldn't read:", err)
+					continue
+				}
+				command := string(buf[0:nr])
+				if command == "player-next" {
+					if players.current < uint(len(players.list)-1) {
+						players.current += 1
 					} else {
-						// fmt.Println("Adding", name)
-						players.New(name)
+						players.current = 0
 					}
+					players.Refresh()
+					fmt.Println(players.JSON())
+				} else if command == "player-prev" {
+					if players.current != 0 {
+						players.current -= 1
+					} else {
+						players.current = uint(len(players.list) - 1)
+					}
+					players.Refresh()
+					fmt.Println(players.JSON())
+				} else if command == "next" {
+					players.Next()
+				} else if command == "prev" {
+					players.Prev()
+				} else if command == "toggle" {
+					players.Toggle()
+				} else {
+					fmt.Println("Invalid command")
 				}
 			}
-		} else if strings.Contains(v.Name, "PropertiesChanged") && strings.Contains(v.Body[0].(string), INTERFACE+".Player") {
-			players.Refresh()
-			players.Sort()
-			if l := players.JSON(); l != lastLine {
-				lastLine = l
-				fmt.Println(l)
+		}()
+		conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, MATCH_NOC)
+		conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, MATCH_PC)
+		c := make(chan *dbus.Signal, 10)
+		conn.Signal(c)
+		for v := range c {
+			// fmt.Printf("SIGNAL: Sender %s, Path %s, Name %s, Body %s\n", v.Sender, v.Path, v.Name, v.Body)
+			if strings.Contains(v.Name, "NameOwnerChanged") {
+				switch name := v.Body[0].(type) {
+				case string:
+					var pid uint32
+					conn.BusObject().Call("org.freedesktop.DBus.GetConnectionUnixProcessID", 0, name).Store(&pid)
+					if strings.Contains(name, INTERFACE) {
+						if pid == 0 {
+							// fmt.Println("Removing", name)
+							players.Remove(name)
+						} else {
+							// fmt.Println("Adding", name)
+							players.New(name)
+						}
+					}
+				}
+			} else if strings.Contains(v.Name, "PropertiesChanged") && strings.Contains(v.Body[0].(string), INTERFACE+".Player") {
+				players.Refresh()
+				if AUTOFOCUS {
+					players.Sort()
+				}
+				if l := players.JSON(); l != lastLine {
+					lastLine = l
+					fmt.Println(l)
+				}
 			}
 		}
-		// fmt.Println("New array", players)
 	}
 }
