@@ -15,7 +15,7 @@ MPRIS2 is widely supported, so this component should work with:
 * Most other music/media players
 
 ## Install
-`go get github.com/hrfee/waybar-mpris`
+`go get github.com/hrfee/waybar-mpris` will install the program, as well as the go dbus bindings and pflags for command-line arguments.
 
 or just grab the `waybar-mpris` binary from here and place it in your PATH.
 

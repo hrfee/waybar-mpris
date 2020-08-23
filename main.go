@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/godbus/dbus/v5"
 	flag "github.com/spf13/pflag"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -15,6 +16,12 @@ import (
 var knownPlayers = map[string]string{
 	"plasma-browser-integration": "Browser",
 	"noson":                      "Noson",
+}
+
+var knownBrowsers = map[string]string{
+	"mozilla":  "Firefox",
+	"chrome":   "Chrome",
+	"chromium": "Chromium",
 }
 
 type Player struct {
@@ -50,6 +57,20 @@ func NewPlayer(conn *dbus.Conn, name string) (p *Player) {
 	for key, val := range knownPlayers {
 		if strings.Contains(name, key) {
 			playerName = val
+			if val == "Browser" {
+				var pid uint32
+				conn.BusObject().Call("org.freedesktop.DBus.GetConnectionUnixProcessID", 0, name).Store(&pid)
+				file, err := ioutil.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+				if err == nil {
+					cmd := string(file)
+					for k, v := range knownBrowsers {
+						if strings.Contains(cmd, k) {
+							playerName = v
+							break
+						}
+					}
+				}
+			}
 			break
 		}
 	}
