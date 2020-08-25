@@ -3,14 +3,15 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/godbus/dbus/v5"
-	flag "github.com/spf13/pflag"
 	"io/ioutil"
 	"log"
 	"net"
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/godbus/dbus/v5"
+	flag "github.com/spf13/pflag"
 )
 
 var knownPlayers = map[string]string{
@@ -225,7 +226,6 @@ func (ls List) Swap(i, j int) {
 	ls[i], ls[j] = ls[j], ls[i]
 }
 
-// Doesn't retain order since sorting if constantly done anyway
 func (pl *PlayerList) Remove(fullName string) {
 	currentName := pl.list[pl.current].fullName
 	var i int
@@ -265,7 +265,8 @@ func (pl *PlayerList) Reload() error {
 		return err
 	}
 	for _, name := range buses {
-		if strings.HasPrefix(name, INTERFACE) {
+		// Don't add playerctld, it just duplicates other players
+		if strings.HasPrefix(name, INTERFACE) && !strings.Contains(name, "playerctld") {
 			pl.New(name)
 		}
 	}
@@ -401,7 +402,8 @@ func main() {
 				case string:
 					var pid uint32
 					conn.BusObject().Call("org.freedesktop.DBus.GetConnectionUnixProcessID", 0, name).Store(&pid)
-					if strings.Contains(name, INTERFACE) {
+					// Ignore playerctld again
+					if strings.Contains(name, INTERFACE) && !strings.Contains(name, "playerctld") {
 						if pid == 0 {
 							// fmt.Println("Removing", name)
 							players.Remove(name)
