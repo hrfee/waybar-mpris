@@ -24,7 +24,7 @@ When running, the program will pipe out json in waybar's format. Add something l
 ```
 "custom/waybar-mpris": {
     "return-type": "json",
-    "exec": "waybar-mpris",
+    "exec": "waybar-mpris --position --autofocus",
     "on-click": "waybar-mpris --send toggle",
     // This option will switch between players on right click.
         "on-click-right": "waybar-mpris --send player-next",
@@ -42,17 +42,19 @@ When running, the program will pipe out json in waybar's format. Add something l
 ```
 Usage of waybar-mpris:
       --autofocus          Auto switch to currently playing music players.
-      --order string       Element order. (default "SYMBOL:ARTIST:ALBUM:TITLE")
+      --order string       Element order. (default "SYMBOL:ARTIST:ALBUM:TITLE:POSITION")
       --pause string       Pause symbol/text to use. (default "\uf8e3")
       --play string        Play symbol/text to use. (default "▶")
+      --position           Show current position between brackets, e.g (04:50/05:00)
       --send string        send command to already runnning waybar-mpris instance. (options: player-next/player-prev/next/prev/toggle)
       --separator string   Separator string to use between artist, album, and title. (default " - ")
 ```
 
-* Modify the order of components with `--order`. `SYMBOL` is the play/paused icon or text, other options are self explanatory.
+* Modify the order of components with `--order`. `SYMBOL` is the play/paused icon or text, `POSITION` is the track position (if enabled), other options are self explanatory.
 * `--play/--pause` specify the symbols or text to display when music is paused/playing respectively.
 * `--separator` specifies a string to separate the artist, album and title text.
 * `--autofocus` makes waybar-mpris automatically focus on currently playing music players.
+* `--position` enables the display of the track position.
 * `--send` sends commands to an already running waybar-mpris instance via a unix socket. Commands:
   * `player-next`: Switch to displaying and controlling next available player.
   * `player-prev`: Same as `player-next`, but for the previous player.
