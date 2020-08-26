@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/godbus/dbus/v5"
 	flag "github.com/spf13/pflag"
@@ -47,9 +48,10 @@ var (
 	PLAY      = "▶"
 	PAUSE     = ""
 	SEP       = " - "
-	ORDER     = "SYMBOL:ARTIST:ALBUM:TITLE"
+	ORDER     = "SYMBOL:ARTIST:ALBUM:TITLE:POSITION"
 	AUTOFOCUS = false
 	COMMANDS  = []string{"player-next", "player-prev", "next", "prev", "toggle"}
+	SHOW_POS  = false
 )
 
 // NewPlayer returns a new player object.
@@ -140,6 +142,31 @@ func (p *Player) Refresh() (err error) {
 	return nil
 }
 
+func µsToString(µs int64) string {
+	seconds := int(µs / 1e6)
+	minutes := int(seconds / 60)
+	seconds -= minutes * 60
+	return fmt.Sprintf("%02d:%02d", minutes, seconds)
+}
+
+func (p *Player) Position() string {
+	// position is in microseconds so we prob need int64 to be safe
+	l := p.metadata["mpris:length"].Value().(int64)
+	length := µsToString(l)
+	if length == "" {
+		return ""
+	}
+	pos, err := p.player.GetProperty(INTERFACE + ".Player.Position")
+	if err != nil {
+		return ""
+	}
+	position := µsToString(pos.Value().(int64))
+	if position == "" {
+		return ""
+	}
+	return position + "/" + length
+}
+
 func (p *Player) JSON() string {
 	data := map[string]string{}
 	symbol := PLAY
@@ -147,6 +174,13 @@ func (p *Player) JSON() string {
 	if p.playing {
 		symbol = PAUSE
 		data["class"] = "playing"
+	}
+	var pos string
+	if SHOW_POS {
+		pos = p.Position()
+		if pos != "" {
+			pos = "(" + pos + ")"
+		}
 	}
 	var items []string
 	order := strings.Split(ORDER, ":")
@@ -165,6 +199,10 @@ func (p *Player) JSON() string {
 			if p.title != "" {
 				items = append(items, p.title)
 			}
+		} else if v == "POSITION" && SHOW_POS {
+			if pos != "" {
+				items = append(items, pos)
+			}
 		}
 	}
 	if len(items) == 0 {
@@ -173,9 +211,9 @@ func (p *Player) JSON() string {
 	text := ""
 	for i, v := range items {
 		right := ""
-		if v == symbol && i != len(items)-1 {
+		if (v == symbol || v == pos) && i != len(items)-1 {
 			right = " "
-		} else if i != len(items)-1 && items[i+1] != symbol {
+		} else if i != len(items)-1 && items[i+1] != symbol && items[i+1] != pos {
 			right = SEP
 		} else {
 			right = " "
@@ -316,6 +354,7 @@ func main() {
 	flag.StringVar(&SEP, "separator", SEP, "Separator string to use between artist, album, and title.")
 	flag.StringVar(&ORDER, "order", ORDER, "Element order.")
 	flag.BoolVar(&AUTOFOCUS, "autofocus", AUTOFOCUS, "Auto switch to currently playing music players.")
+	flag.BoolVar(&SHOW_POS, "position", SHOW_POS, "Show current position between brackets, e.g (04:50/05:00)")
 	var command string
 	flag.StringVar(&command, "send", "", "send command to already runnning waybar-mpris instance. (options: "+strings.Join(COMMANDS, "/")+")")
 	flag.Parse()
@@ -344,6 +383,7 @@ func main() {
 		fmt.Println(players.JSON())
 		lastLine := ""
 		// fmt.Println("New array", players)
+		// Start command listener
 		go func() {
 			os.Remove(SOCK)
 			listener, err := net.Listen("unix", SOCK)
@@ -391,8 +431,19 @@ func main() {
 				}
 			}
 		}()
+
 		conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, MATCH_NOC)
 		conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, MATCH_PC)
+		if SHOW_POS {
+			go func() {
+				for {
+					time.Sleep(1000 * time.Millisecond)
+					if players.list[players.current].playing {
+						go fmt.Println(players.JSON())
+					}
+				}
+			}()
+		}
 		c := make(chan *dbus.Signal, 10)
 		conn.Signal(c)
 		for v := range c {
