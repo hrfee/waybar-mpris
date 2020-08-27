@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,7 @@ var knownBrowsers = map[string]string{
 type Player struct {
 	player                               dbus.BusObject
 	fullName, name, title, artist, album string
+	pid                                  uint32
 	playing, stopped                     bool
 	metadata                             map[string]dbus.Variant
 	conn                                 *dbus.Conn
@@ -50,19 +52,19 @@ var (
 	SEP       = " - "
 	ORDER     = "SYMBOL:ARTIST:ALBUM:TITLE:POSITION"
 	AUTOFOCUS = false
-	COMMANDS  = []string{"player-next", "player-prev", "next", "prev", "toggle"}
+	COMMANDS  = []string{"player-next", "player-prev", "next", "prev", "toggle", "list"}
 	SHOW_POS  = false
 )
 
 // NewPlayer returns a new player object.
 func NewPlayer(conn *dbus.Conn, name string) (p *Player) {
 	playerName := strings.ReplaceAll(name, INTERFACE+".", "")
+	var pid uint32
+	conn.BusObject().Call("org.freedesktop.DBus.GetConnectionUnixProcessID", 0, name).Store(&pid)
 	for key, val := range knownPlayers {
 		if strings.Contains(name, key) {
 			playerName = val
 			if val == "Browser" {
-				var pid uint32
-				conn.BusObject().Call("org.freedesktop.DBus.GetConnectionUnixProcessID", 0, name).Store(&pid)
 				file, err := ioutil.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 				if err == nil {
 					cmd := string(file)
@@ -82,6 +84,7 @@ func NewPlayer(conn *dbus.Conn, name string) (p *Player) {
 		conn:     conn,
 		name:     playerName,
 		fullName: name,
+		pid:      pid,
 	}
 	p.Refresh()
 	return
@@ -369,6 +372,16 @@ func main() {
 			log.Fatalln("Couldn't send command")
 		}
 		fmt.Println("Sent.")
+		if command == "list" {
+			buf := make([]byte, 512)
+			nr, err := conn.Read(buf)
+			if err != nil {
+				log.Fatalf("Couldn't read response.")
+			}
+			response := string(buf[0:nr])
+			fmt.Println("Response:")
+			fmt.Printf(response)
+		}
 	} else {
 		conn, err := dbus.SessionBus()
 		if err != nil {
@@ -426,6 +439,22 @@ func main() {
 					players.Prev()
 				} else if command == "toggle" {
 					players.Toggle()
+				} else if command == "list" {
+					resp := ""
+					pad := 0
+					i := len(players.list)
+					for i != 0 {
+						i /= 10
+						pad++
+					}
+					for i, p := range players.list {
+						symbol := ""
+						if uint(i) == players.current {
+							symbol = "*"
+						}
+						resp += fmt.Sprintf("%0"+strconv.Itoa(pad)+"d%s: Name: %s; Playing: %t; PID: %d\n", i, symbol, p.fullName, p.playing, p.pid)
+					}
+					con.Write([]byte(resp))
 				} else {
 					fmt.Println("Invalid command")
 				}
