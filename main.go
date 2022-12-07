@@ -172,10 +172,10 @@ func (p *Player) Position() string {
 
 func (p *Player) JSON() string {
 	data := map[string]string{}
-	symbol := PLAY
+	symbol := PAUSE
 	data["class"] = "paused"
 	if p.playing {
-		symbol = PAUSE
+		symbol = PLAY
 		data["class"] = "playing"
 	}
 	var pos string
